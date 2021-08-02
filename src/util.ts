@@ -1,9 +1,17 @@
-/* @flow */
-
+/* eslint max-lines: off */
 import { join, basename, dirname } from 'path';
 import { homedir, tmpdir } from 'os';
 
-import { exists, removeSync, writeFileSync, existsSync, ensureDirSync, readFileSync, ensureDir, readdir } from 'fs-extra';
+import {
+    exists,
+    removeSync,
+    writeFileSync,
+    existsSync,
+    ensureDirSync,
+    readFileSync,
+    ensureDir,
+    readdir
+} from 'fs-extra';
 import rmfr from 'rmfr';
 import uuid from 'uuid';
 import processExists from 'process-exists';
@@ -12,13 +20,14 @@ import nodeCleanup from 'node-cleanup';
 import type { CacheType, LoggerType } from './types';
 import { NODE_MODULES, PACKAGE_JSON, LOCK } from './constants';
 
-export function clearObject<T>(obj : { [string] : T }) : void {
+export function clearObject<T>(obj: Record<string, T>): void {
     for (const key of Object.keys(obj)) {
         delete obj[key];
     }
 }
-
-export async function createHomeDirectory(...names : $ReadOnlyArray<string>) : Promise<string> {
+export async function createHomeDirectory(
+    ...names: ReadonlyArray<string>
+): Promise<string> {
     try {
         const dir = join(homedir(), ...names);
         await ensureDir(dir);
@@ -35,12 +44,16 @@ export async function createHomeDirectory(...names : $ReadOnlyArray<string>) : P
         throw err;
     }
 }
-
-export async function sleep(period : number) : Promise<void> {
-    return await new Promise(resolve => setTimeout(resolve, period));
+export async function sleep(period: number): Promise<void> {
+    return await new Promise((resolve) => setTimeout(resolve, period));
 }
 
-export function getPromise<T>() : {| promise : Promise<T>, resolve : (T) => void, reject : (mixed) => void |} {
+// TODO: this doesn't appear used. moving from generic to any to resolve the issue of T being ambigious in return
+export function getPromise(): {
+    promise: Promise<unknown>;
+    resolve: (arg0: unknown) => void;
+    reject: (arg0: unknown) => void;
+    } {
     let resolve;
     let reject;
     // eslint-disable-next-line promise/param-names
@@ -48,38 +61,53 @@ export function getPromise<T>() : {| promise : Promise<T>, resolve : (T) => void
         resolve = res;
         reject = rej;
     });
+
     if (!resolve || !reject) {
         throw new Error(`Could not instantiate promise`);
     }
-    return { promise, resolve, reject };
-}
 
-export async function sleepWhile(condition : () => mixed, period : number, interval : number = 500) : Promise<void> {
+    return {
+        promise,
+        resolve,
+        reject
+    };
+}
+export async function sleepWhile(
+    condition: () => unknown,
+    period: number,
+    interval = 500
+): Promise<void> {
     const start = Date.now();
-    while ((Date.now() - start) < period && await condition()) {
+
+    while (Date.now() - start < period && (await condition())) {
         await sleep(interval);
     }
 }
-
-export type Poller<T> = {|
-    start : () => Poller<T>,
-    stop : () => Poller<T>,
-    result : () => Promise<T>
-|};
-
-export function poll<T : mixed>({ handler, onError, period, multiplier = 2 } : {| handler : () => Promise<T> | T, onError? : ?(Error) => void, period : number, multiplier? : number |}) : Poller<T> {
-
+export type Poller<T> = {
+    start: () => Poller<T>;
+    stop: () => Poller<T>;
+    result: () => Promise<T>;
+};
+export function poll<T extends unknown>({
+    handler,
+    onError,
+    period,
+    multiplier = 2
+}: {
+    handler: () => Promise<T> | T;
+    onError?: ((arg0: Error) => void) | null | undefined;
+    period: number;
+    multiplier?: number;
+}): Poller<T> {
     let interval = period;
     let running = false;
-
-    let currentResult;
+    let currentResult: T | Promise<T>;
     let nextResult;
 
     const poller = async () => {
         // eslint-disable-next-line no-unmodified-loop-condition
         while (running) {
             let success = true;
-
             nextResult = handler();
             currentResult = currentResult || nextResult;
 
@@ -89,6 +117,7 @@ export function poll<T : mixed>({ handler, onError, period, multiplier = 2 } : {
                 if (onError) {
                     onError(err);
                 }
+
                 success = false;
             }
 
@@ -121,24 +150,28 @@ export function poll<T : mixed>({ handler, onError, period, multiplier = 2 } : {
             return await currentResult;
         }
     };
-
     return result;
 }
-
-export function resolveModuleDirectory(name : string, paths? : $ReadOnlyArray<string>) : ?string {
+export function resolveModuleDirectory(
+    name: string,
+    paths?: Array<string>
+): string | null | undefined {
     let dir;
 
     try {
-        // $FlowFixMe
-        dir = require.resolve(`${ name }/${ PACKAGE_JSON }`, { paths });
+        dir = require.resolve(`${ name }/${ PACKAGE_JSON }`, {
+            paths
+        });
     } catch (err) {
         return;
     }
 
     return dir.split('/').slice(0, -1).join('/');
 }
-
-export async function resolveNodeModulesDirectory(name : string, paths? : $ReadOnlyArray<string>) : Promise<?string> {
+export async function resolveNodeModulesDirectory(
+    name: string,
+    paths?: Array<string>
+): Promise<string | null | undefined> {
     const moduleDir = resolveModuleDirectory(name, paths);
 
     if (!moduleDir) {
@@ -146,7 +179,8 @@ export async function resolveNodeModulesDirectory(name : string, paths? : $ReadO
     }
 
     const localNodeModules = join(moduleDir, NODE_MODULES);
-
+    // TODO: exists is deprecated. This will be an issue for tsc so we should update this to use fs.stat or fs.access
+    // @ts-ignore - fs-extra types are incorrect for pify'ed exists
     if (await exists(localNodeModules)) {
         return localNodeModules;
     }
@@ -158,23 +192,21 @@ export async function resolveNodeModulesDirectory(name : string, paths? : $ReadO
         return splitDir.slice(0, nodeModulesIndex + 1).join('/');
     }
 }
-
 const memoizePromiseCache = new Map();
+type MemoizePromiseOpts = {
+    lifetime?: number;
+};
+export function memoizePromise<
+    T,
+    A extends ReadonlyArray<any>,
+    F extends (...args: A) => Promise<T>
+>(fn: F, opts?: MemoizePromiseOpts): F {
+    const { lifetime = 0 } = opts || {};
 
-type MemoizePromiseOpts = {|
-    lifetime? : number
-|};
-
-export function memoizePromise<T, A : $ReadOnlyArray<*>, F : (...args : A) => Promise<T>>(fn : F, opts? : MemoizePromiseOpts) : F {
-    const {
-        lifetime = 0
-    } = opts || {};
-
-    const memoizedFunction = async (...args) => {
+    const memoizedFunction = async (...args: Array<A>) => {
         const cacheKey = JSON.stringify(args);
         const cache = memoizePromiseCache.get(fn) || {};
         const cacheResult = cache[cacheKey];
-
         memoizePromiseCache.set(fn, cache);
 
         if (cacheResult) {
@@ -187,12 +219,15 @@ export function memoizePromise<T, A : $ReadOnlyArray<*>, F : (...args : A) => Pr
             delete cache[cacheKey];
         }
 
+        // @ts-ignore
         const resultPromise = fn(...args);
-        const cacheObj = { resultPromise, expiry: 0 };
-
+        const cacheObj = {
+            resultPromise,
+            expiry: 0
+        };
         cache[cacheKey] = cacheObj;
-
         let result;
+
         try {
             result = await resultPromise;
         } catch (err) {
@@ -209,7 +244,7 @@ export function memoizePromise<T, A : $ReadOnlyArray<*>, F : (...args : A) => Pr
         return result;
     };
 
-    // $FlowFixMe
+    // @ts-ignore
     return memoizedFunction;
 }
 
@@ -217,20 +252,29 @@ memoizePromise.reset = () => {
     memoizePromiseCache.clear();
 };
 
-const backupMemoryCache = {};
-
-export async function cacheReadWrite<T>(cacheKey : string, handler : () => Promise<T>, { cache, logger } : {| cache : ?CacheType, logger : LoggerType |}) : Promise<T> {
+const backupMemoryCache: any = {};
+export async function cacheReadWrite<T>(
+    cacheKey: string,
+    handler: () => Promise<T>,
+    {
+        cache,
+        logger
+    }: {
+        cache: CacheType | null | undefined;
+        logger: LoggerType;
+    }
+): Promise<T> {
     const strategies = [
         async () => {
             if (cache) {
-                const result : ?string = await cache.get(cacheKey);
-                
+                const result: string | void | null | undefined =
+                    await cache.get(cacheKey);
+
                 if (result) {
                     return JSON.parse(result);
                 }
             }
         },
-
         async () => {
             const result = await handler();
             backupMemoryCache[cacheKey] = result;
@@ -239,20 +283,20 @@ export async function cacheReadWrite<T>(cacheKey : string, handler : () => Promi
                 try {
                     await cache.set(cacheKey, JSON.stringify(result));
                 } catch (err) {
-                    logger.warn(`${ cacheKey }_cache_write_error`, { err: err.stack || err.toString() });
+                    logger.warn(`${ cacheKey }_cache_write_error`, {
+                        err: err.stack || err.toString()
+                    });
                 }
             }
 
             return result;
         },
-
         async () => {
             if (backupMemoryCache[cacheKey]) {
                 return await backupMemoryCache[cacheKey];
             }
         }
     ];
-
     let error;
 
     for (const strategy of strategies) {
@@ -262,7 +306,9 @@ export async function cacheReadWrite<T>(cacheKey : string, handler : () => Promi
             result = await strategy();
         } catch (err) {
             error = err || error;
-            logger.warn(`grabthar_cache_strategy_error`, { err: err.stack || err.toString() });
+            logger.warn(`grabthar_cache_strategy_error`, {
+                err: err.stack || err.toString()
+            });
         }
 
         if (result) {
@@ -283,10 +329,9 @@ cacheReadWrite.clear = () => {
 };
 
 const MAX_LOCK_TIME = 60 * 1000;
+const activeLocks: Record<string, any> = {};
 
-const activeLocks = {};
-
-const acquireLock = (lockFile : string) => {
+const acquireLock = (lockFile: string) => {
     let resolve;
     let reject;
     // eslint-disable-next-line promise/param-names
@@ -294,17 +339,21 @@ const acquireLock = (lockFile : string) => {
         resolve = res;
         reject = rej;
     });
-
-    activeLocks[lockFile] = { promise, resolve, reject };
+    activeLocks[lockFile] = {
+        promise,
+        resolve,
+        reject
+    };
     ensureDirSync(dirname(lockFile));
+    // @ts-ignore parseInt on Date.now which is already a number
     writeFileSync(lockFile, parseInt(Date.now(), 10).toString());
 };
 
-const isLocked = (lockFile : string) => {
+const isLocked = (lockFile: string) => {
     return activeLocks[lockFile] || existsSync(lockFile);
 };
 
-const releaseLock = (lockFile : string) => {
+const releaseLock = (lockFile: string) => {
     if (activeLocks[lockFile]) {
         activeLocks[lockFile].resolve();
         delete activeLocks[lockFile];
@@ -315,7 +364,7 @@ const releaseLock = (lockFile : string) => {
     }
 };
 
-const getLockTime = (lockFile : string) : ?number => {
+const getLockTime = (lockFile: string): number | null | undefined => {
     if (!existsSync(lockFile)) {
         return;
     }
@@ -325,7 +374,7 @@ const getLockTime = (lockFile : string) : ?number => {
     return time;
 };
 
-const awaitLock = async (lockFile : string) => {
+const awaitLock = async (lockFile: string): Promise<void> => {
     if (!isLocked(lockFile)) {
         return;
     }
@@ -339,29 +388,30 @@ const awaitLock = async (lockFile : string) => {
         return;
     }
 
-    await new Promise(resolve => {
-        const check = () => {
+    await new Promise<void>((resolve) => {
+        const check = (): void | Promise<void> => {
             if (!isLocked(lockFile)) {
                 resolve();
                 return;
             }
 
+            // @ts-ignore parseInt on Date.now which is a number
             const startTime = parseInt(Date.now(), 10);
             const time = getLockTime(lockFile);
-            
-            if (!time || (startTime - time) > MAX_LOCK_TIME) {
+
+            if (!time || startTime - time > MAX_LOCK_TIME) {
                 releaseLock(lockFile);
                 resolve();
                 return;
             }
-            
+
             return sleep(500).then(check);
         };
 
         check();
     });
-
     await sleep(10);
+
     if (isLocked(lockFile)) {
         return await awaitLock(lockFile);
     }
@@ -372,10 +422,11 @@ nodeCleanup(() => {
         releaseLock(lockFile);
     }
 });
-
-export async function withFileSystemLock<T>(task : () => Promise<T>, lockDir? : string = tmpdir()) : Promise<T> {
+export async function withFileSystemLock<T>(
+    task: () => Promise<T>,
+    lockDir: string = tmpdir()
+): Promise<T> {
     const lockFile = join(lockDir, LOCK);
-
     await awaitLock(lockFile);
     acquireLock(lockFile);
 
@@ -385,28 +436,23 @@ export async function withFileSystemLock<T>(task : () => Promise<T>, lockDir? : 
         releaseLock(lockFile);
     }
 }
-
-export function sanitizeString(str : string) : string {
+export function sanitizeString(str: string): string {
     return str.replace(/[^a-zA-Z0-9]+/g, '_');
 }
-
-export async function rmrf(dir : string) : Promise<void> {
+export async function rmrf(dir: string): Promise<void> {
     try {
         await rmfr(dir);
     } catch (err) {
         // pass
     }
 }
-
-export function isValidDependencyVersion(version : string) : boolean {
+export function isValidDependencyVersion(version: string): boolean {
     return Boolean(version.match(/^\d+\.\d+\.\d+$/));
 }
-
-export function identity<T>(item : T) : T {
+export function identity<T>(item: T): T {
     return item;
 }
-
-export function tryRemove(path : string) {
+export function tryRemove(path: string): void {
     try {
         if (existsSync(path)) {
             removeSync(path);
@@ -416,8 +462,7 @@ export function tryRemove(path : string) {
         console.error(err);
     }
 }
-
-export async function tryRmrf(dir : string) : Promise<void> {
+export async function tryRmrf(dir: string): Promise<void> {
     try {
         await rmrf(dir);
     } catch (err) {
@@ -425,8 +470,7 @@ export async function tryRmrf(dir : string) : Promise<void> {
         console.error(err);
     }
 }
-
-export async function getTemporaryDirectory(name : string) : Promise<string> {
+export async function getTemporaryDirectory(name: string): Promise<string> {
     const tmpDir = tmpdir();
 
     try {
@@ -442,7 +486,12 @@ export async function getTemporaryDirectory(name : string) : Promise<string> {
             }
 
             const pid = parseInt(match[1], 10);
-            if (typeof pid !== 'number' || pid === process.pid || await processExists(pid)) {
+
+            if (
+                typeof pid !== 'number' ||
+                pid === process.pid ||
+                (await processExists(pid))
+            ) {
                 continue;
             }
 
@@ -453,11 +502,17 @@ export async function getTemporaryDirectory(name : string) : Promise<string> {
         console.error(err);
     }
 
-
-    return join(tmpDir, `grabthar-tmp-${ name.replace(/[^a-zA-Z0-9_-]/g, '') }-${ uuid.v4().slice(0, 8) }-${ process.pid }`);
+    return join(
+        tmpDir,
+        `grabthar-tmp-${ name.replace(/[^a-zA-Z0-9_-]/g, '') }-${ uuid
+            .v4()
+            .slice(0, 8) }-${ process.pid }`
+    );
 }
-
-export function jumpUpDir(path : string, target : string) : ?string {
+export function jumpUpDir(
+    path: string,
+    target: string
+): string | null | undefined {
     while (path && path !== '/') {
         path = join(path, '..');
 
@@ -466,13 +521,13 @@ export function jumpUpDir(path : string, target : string) : ?string {
         }
     }
 }
-
-export function dynamicRequire<T>(path : string) : T {
-    // $FlowFixMe
+export function dynamicRequire<T>(path: string): T {
     return require(path); // eslint-disable-line security/detect-non-literal-require
 }
-
-export function dynamicRequireRelative<T>(name : string, nodeModulesPath : ?string) : T {
+export function dynamicRequireRelative<T>(
+    name: string,
+    nodeModulesPath: string | null | undefined
+): T {
     if (!nodeModulesPath) {
         return dynamicRequire(name);
     }
@@ -482,7 +537,7 @@ export function dynamicRequireRelative<T>(name : string, nodeModulesPath : ?stri
             return dynamicRequire(join(nodeModulesPath, name));
         } catch (err) {
             nodeModulesPath = jumpUpDir(nodeModulesPath, NODE_MODULES);
-            
+
             if (!nodeModulesPath) {
                 throw err;
             }
@@ -491,3 +546,4 @@ export function dynamicRequireRelative<T>(name : string, nodeModulesPath : ?stri
 
     throw new Error(`Can not import ${ name }`);
 }
+

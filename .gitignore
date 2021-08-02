@@ -6,3 +6,4 @@ npm-debug.log
 **/*.flow
 coverage
 package-lock.json
+dist
